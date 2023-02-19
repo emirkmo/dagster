@@ -1,17 +1,24 @@
 import pytest
-from dagster import DagsterInvalidConfigError, Field, String, root_input_manager
-from dagster._core.definitions.config import ConfigMapping
-from dagster._core.definitions.decorators import op
-from dagster._core.definitions.decorators.graph_decorator import graph
-from dagster._core.definitions.decorators.job_decorator import job
-from dagster._core.definitions.input import In
+from dagster import (
+    ConfigMapping,
+    DagsterInvalidConfigError,
+    Field,
+    In,
+    String,
+    graph,
+    job,
+    op,
+    root_input_manager,
+)
 
 
-def test_basic_op_with_config():
+def test_basic_solid_with_config():
     did_get = {}
 
     @op(
         name="op_with_context",
+        ins={},
+        out={},
         config_schema={"some_config": Field(String)},
     )
     def op_with_context(context):
@@ -22,7 +29,7 @@ def test_basic_op_with_config():
         op_with_context()
 
     job_def.execute_in_process(
-        run_config={"ops": {"op_with_context": {"config": {"some_config": "foo"}}}},
+        {"ops": {"op_with_context": {"config": {"some_config": "foo"}}}},
     )
 
     assert "yep" in did_get
@@ -35,6 +42,8 @@ def test_config_arg_mismatch():
 
     @op(
         name="op_with_context",
+        ins={},
+        out={},
         config_schema={"some_config": Field(String)},
     )
     def op_with_context(context):
@@ -46,12 +55,12 @@ def test_config_arg_mismatch():
 
     with pytest.raises(DagsterInvalidConfigError):
         job_def.execute_in_process(
-            run_config={"ops": {"op_with_context": {"config": {"some_config": 1}}}},
+            {"ops": {"op_with_context": {"config": {"some_config": 1}}}},
         )
 
 
-def test_op_not_found():
-    @op(name="find_me_op")
+def test_solid_not_found():
+    @op(name="find_me_op", ins={}, out={})
     def find_me_op(_):
         raise Exception("should not reach")
 
@@ -60,9 +69,7 @@ def test_op_not_found():
         find_me_op()
 
     with pytest.raises(DagsterInvalidConfigError):
-        job_def.execute_in_process(
-            run_config={"ops": {"not_found": {"config": {"some_config": 1}}}}
-        )
+        job_def.execute_in_process({"ops": {"not_found": {"config": {"some_config": 1}}}})
 
 
 def test_extra_config_ignored_default_input():
@@ -75,19 +82,19 @@ def test_extra_config_ignored_default_input():
         return input_table
 
     @job
-    def job_def():
+    def my_job():
         op2(op1())
 
     run_config = {"ops": {"op1": {"config": {"some_config": "a"}}}}
-    assert job_def.execute_in_process(run_config=run_config).success
+    assert my_job.execute_in_process(run_config=run_config).success
 
-    # same run config is valid even though op1 not in subset
-    assert job_def.execute_in_process(run_config=run_config, op_selection=["op2"]).success
+    # same run config is valid even though solid1 not in subset
+    assert my_job.execute_in_process(run_config=run_config, op_selection=["op2"]).success
 
     with pytest.raises(DagsterInvalidConfigError):
-        # typos still raise, op_1 instead of op1
-        job_def.execute_in_process(
-            run_config={"ops": {"op_1": {"config": {"some_config": "a"}}}},
+        # typos still raise, solid_1 instead of solid1
+        my_job.execute_in_process(
+            {"ops": {"solid_1": {"config": {"some_config": "a"}}}},
             op_selection=["op2"],
         )
 
@@ -102,34 +109,34 @@ def test_extra_config_ignored_no_default_input():
         return input_table
 
     @job
-    def job_def():
+    def my_job():
         op2(op1())
 
     run_config = {"ops": {"op1": {"config": {"some_config": "a"}}}}
-    assert job_def.execute_in_process(run_config=run_config).success
+    assert my_job.execute_in_process(run_config=run_config).success
 
-    # run config is invalid since there is no input for op2
+    # run config is invalid since there is no input for solid2
     with pytest.raises(DagsterInvalidConfigError):
-        job_def.execute_in_process(
+        my_job.execute_in_process(
             run_config=run_config,
             op_selection=["op2"],
         )
 
     # works if input added, don't need to remove other stuff
     run_config["ops"]["op2"] = {"inputs": {"input_table": {"value": "public.table_1"}}}
-    assert job_def.execute_in_process(
+    assert my_job.execute_in_process(
         run_config=run_config,
         op_selection=["op2"],
     ).success
 
-    # input for op2 ignored if select op1
-    assert job_def.execute_in_process(
+    # input for solid2 ignored if select solid1
+    assert my_job.execute_in_process(
         run_config=run_config,
         op_selection=["op1"],
     ).success
 
 
-def test_extra_config_ignored_graphs():
+def test_extra_config_ignored_composites():
     @op(config_schema={"some_config": str})
     def op1(_):
         return "public.table_1"
@@ -152,15 +159,15 @@ def test_extra_config_ignored_graphs():
         return op2(input_table)
 
     @job
-    def job_def():
+    def my_job():
         graph2(graph1())
 
     run_config = {"ops": {"graph1": {"config": {"wrapped_config": "a"}}}}
-    assert job_def.execute_in_process(run_config=run_config).success
+    assert my_job.execute_in_process(run_config=run_config).success
 
-    assert job_def.execute_in_process(run_config=run_config, op_selection=["graph2"]).success
+    assert my_job.execute_in_process(run_config=run_config, op_selection=["graph2"]).success
 
-    assert job_def.execute_in_process(run_config=run_config, op_selection=["graph1"]).success
+    assert my_job.execute_in_process(run_config=run_config, op_selection=["graph1"]).success
 
 
 def test_extra_config_input_bug():
@@ -173,24 +180,24 @@ def test_extra_config_input_bug():
         return input_table
 
     @job
-    def job_def():
+    def my_job():
         takes_input(root())
 
-    # Requires passing some config to the op to bypass the
-    # op block level optionality
+    # Requires passing some config to the solid to bypass the
+    # solid block level optionality
     run_config = {"ops": {"takes_input": {"config": {"some_config": "a"}}}}
 
-    assert job_def.execute_in_process(run_config=run_config).success
+    assert my_job.execute_in_process(run_config=run_config).success
 
     # Test against a bug where we generated required input config
     # for takes_input even though it was not being executed.
-    assert job_def.execute_in_process(
+    assert my_job.execute_in_process(
         run_config=run_config,
         op_selection=["root"],
     ).success
 
-    # subselected pipeline shouldn't require the unselected op's config
-    assert job_def.execute_in_process(
+    # subselected job shouldn't require the unselected solid's config
+    assert my_job.execute_in_process(
         op_selection=["root"],
     ).success
 
@@ -259,7 +266,7 @@ def test_config_with_no_schema():
         assert context.op_config == 5
 
     @job
-    def job_def():
+    def my_job():
         my_op()
 
-    job_def.execute_in_process(run_config={"ops": {"my_op": {"config": 5}}})
+    my_job.execute_in_process(run_config={"ops": {"my_op": {"config": 5}}})

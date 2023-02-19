@@ -3,7 +3,6 @@ import typing
 import pytest
 from dagster import (
     DagsterInvalidConfigError,
-    DagsterInvalidDefinitionError,
     DagsterTypeCheckDidNotPass,
     Dict,
     In,
@@ -11,6 +10,7 @@ from dagster import (
     op,
     usable_as_dagster_type,
 )
+from dagster._core.errors import DagsterInvalidDefinitionError
 from dagster._utils.test import wrap_op_in_graph_and_execute
 
 
