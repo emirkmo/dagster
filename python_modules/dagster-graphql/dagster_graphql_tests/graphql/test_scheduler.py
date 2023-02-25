@@ -284,7 +284,7 @@ mutation($selectorData: ScheduleSelector!, $timestamp: Float) {
 
 def default_execution_params():
     return {
-        "selector": {"name": "no_config_pipeline", "solidSelection": None},
+        "selector": {"name": "no_config_job", "solidSelection": None},
         "mode": "default",
     }
 
@@ -448,9 +448,7 @@ def test_get_schedule_definitions_for_repository(graphql_context):
 
 
 def test_start_and_stop_schedule(graphql_context):
-    schedule_selector = infer_schedule_selector(
-        graphql_context, "no_config_pipeline_hourly_schedule"
-    )
+    schedule_selector = infer_schedule_selector(graphql_context, "no_config_job_hourly_schedule")
 
     # Start a single schedule
     start_result = execute_dagster_graphql(
@@ -491,7 +489,7 @@ def test_get_single_schedule_definition(graphql_context):
     assert result.data
     assert result.data["scheduleOrError"]["__typename"] == "ScheduleNotFoundError"
 
-    schedule_selector = infer_schedule_selector(context, "no_config_pipeline_hourly_schedule")
+    schedule_selector = infer_schedule_selector(context, "no_config_job_hourly_schedule")
 
     # fetch schedule before reconcile
     result = execute_dagster_graphql(
@@ -569,9 +567,7 @@ def test_composite_cron_schedule_definition(graphql_context):
 
 
 def test_next_tick(graphql_context):
-    schedule_selector = infer_schedule_selector(
-        graphql_context, "no_config_pipeline_hourly_schedule"
-    )
+    schedule_selector = infer_schedule_selector(graphql_context, "no_config_job_hourly_schedule")
 
     # Start a single schedule, future tick run requests only available for running schedules
     start_result = execute_dagster_graphql(
@@ -841,7 +837,7 @@ class TestSchedulePermissions(ReadonlyGraphQLContextTestMatrix):
         assert graphql_context.read_only is True
 
         schedule_selector = infer_schedule_selector(
-            graphql_context, "no_config_pipeline_hourly_schedule"
+            graphql_context, "no_config_job_hourly_schedule"
         )
 
         # Start a single schedule
