@@ -219,7 +219,6 @@ from dagster._core.definitions.metadata import (
     IntMetadataValue as IntMetadataValue,
     JsonMetadataValue as JsonMetadataValue,
     MarkdownMetadataValue as MarkdownMetadataValue,
-    MetadataEntry as MetadataEntry,
     MetadataValue as MetadataValue,
     NotebookMetadataValue as NotebookMetadataValue,
     NullMetadataValue as NullMetadataValue,

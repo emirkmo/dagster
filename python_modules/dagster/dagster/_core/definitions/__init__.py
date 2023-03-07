@@ -51,7 +51,6 @@ from .metadata import (
     IntMetadataValue as IntMetadataValue,
     JsonMetadataValue as JsonMetadataValue,
     MarkdownMetadataValue as MarkdownMetadataValue,
-    MetadataEntry as MetadataEntry,
     MetadataValue as MetadataValue,
     PathMetadataValue as PathMetadataValue,
     PythonArtifactMetadataValue as PythonArtifactMetadataValue,

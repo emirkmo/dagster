@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -373,3 +374,25 @@ def test_bool_metadata_value():
     entry_map = {k: v.__class__ for k, v in materialization.metadata.items()}
     assert entry_map["first_bool"] == BoolMetadataValue
     assert entry_map["second_bool"] == BoolMetadataValue
+
+
+def test_metadata_backcompat():
+    old_metadata_entry = json.dumps(
+        {
+            "__class__": "EventMetadataEntry",
+            "label": "foo",
+            "description": "bar",
+            "entry_data": {"__class__": "TextMetadataEntryData", "text": "baz"},
+        }
+    )
+
+    entry = deserialize_value(old_metadata_entry, MetadataEntry)
+    assert entry.label == "foo"
+    assert entry.value == TextMetadataValue("baz")
+
+    assert json.loads(serialize_value(entry)) == {
+        "__class__": "EventMetadataEntry",
+        "label": "foo",
+        "description": None,
+        "entry_data": {"__class__": "TextMetadataEntryData", "text": "baz"},
+    }

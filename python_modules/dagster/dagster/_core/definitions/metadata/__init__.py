@@ -12,7 +12,6 @@ from typing import (
     Optional,
     Sequence,
     Union,
-    cast,
 )
 
 from typing_extensions import Self, TypeAlias, TypeVar
@@ -30,7 +29,6 @@ from dagster._serdes.serdes import (
     unpack_value,
 )
 from dagster._utils.backcompat import (
-    canonicalize_backcompat_args,
     deprecation_warning,
 )
 
@@ -72,26 +70,8 @@ T_Packable = TypeVar("T_Packable", bound=PackableValue, default=PackableValue, c
 
 def normalize_metadata(
     metadata: Mapping[str, RawMetadataValue],
-    metadata_entries: Optional[Sequence["MetadataEntry"]] = None,
     allow_invalid: bool = False,
 ) -> Mapping[str, "MetadataValue"]:
-    if metadata and metadata_entries:
-        raise DagsterInvalidMetadata(
-            "Attempted to provide both `metadata` and `metadata_entries` arguments to an event. "
-            "Must provide only one of the two."
-        )
-    elif metadata_entries:
-        deprecation_warning(
-            'Argument "metadata_entries"',
-            "1.0.0",
-            additional_warn_txt=(
-                "Use argument `metadata` instead. The `MetadataEntry` `description` attribute is"
-                " also deprecated-- argument `metadata` takes a label: value dictionary."
-            ),
-            stacklevel=4,  # to get the caller of `normalize_metadata`
-        )
-        return {entry.label: entry.value for entry in metadata_entries}
-
     # This is a stopgap measure to deal with unsupported metadata values, which occur when we try
     # to convert arbitrary metadata (on e.g. OutputDefinition) to a MetadataValue, which is required
     # for serialization. This will cause unsupported values to be silently replaced with a
@@ -149,10 +129,6 @@ def normalize_metadata_value(raw_value: RawMetadataValue) -> "MetadataValue[Any]
         f"Its type was {type(raw_value)}. Consider wrapping the value with the appropriate "
         "MetadataValue type."
     )
-
-
-def to_metadata_entries(metadata: Mapping[str, "MetadataValue"]) -> Sequence["MetadataEntry"]:
-    return [MetadataEntry(k, value=v) for k, v in metadata.items()]
 
 
 # ########################
@@ -931,8 +907,12 @@ class NullMetadataValue(NamedTuple("_NullMetadataValue", []), MetadataValue[None
 
 
 # ########################
-# ##### METADATA ENTRY
+# ##### METADATA BACKCOMPAT
 # ########################
+
+# Metadata used to be represented as a `List[MetadataEntry]`, but that class has been deleted. But
+# we still serialize metadata dicts to the serialized representation of `List[MetadataEntry]` for
+# backcompat purposes.
 
 
 class MetadataFieldSerializer(FieldSerializer):
@@ -976,74 +956,3 @@ class MetadataFieldSerializer(FieldSerializer):
             )
             for e in metadata_entries
         }
-
-
-T_MetadataValue = TypeVar("T_MetadataValue", bound=MetadataValue, covariant=True)
-
-
-# NOTE: This currently stores value in the `entry_data` NamedTuple attribute. In the next release,
-# we will change the name of the NamedTuple property to `value`, and need to implement custom
-# serialization so that it continues to be saved as `entry_data` for backcompat purposes.
-@whitelist_for_serdes(storage_name="EventMetadataEntry")
-class MetadataEntry(
-    NamedTuple(
-        "_MetadataEntry",
-        [
-            ("label", PublicAttr[str]),
-            ("description", PublicAttr[Optional[str]]),
-            ("entry_data", PublicAttr[MetadataValue]),
-        ],
-    ),
-    Generic[T_MetadataValue],
-):
-    """The standard structure for describing metadata for Dagster events.
-
-    Lists of objects of this type can be passed as arguments to Dagster events and will be displayed
-    in Dagit and other tooling.
-
-    Should be yielded from within an IO manager to append metadata for a given input/output event.
-    For other event types, passing a dict with `MetadataValue` values to the `metadata` argument
-    is preferred.
-
-    Args:
-        label (str): Short display label for this metadata entry.
-        description (Optional[str]): A human-readable description of this metadata entry.
-        value (MetadataValue): Typed metadata entry data. The different types allow
-            for customized display in tools like dagit.
-    """
-
-    def __new__(
-        cls,
-        label: str,
-        description: Optional[str] = None,
-        entry_data: Optional["RawMetadataValue"] = None,
-        value: Optional["RawMetadataValue"] = None,
-    ):
-        if description is not None:
-            deprecation_warning(
-                'The "description" attribute on "MetadataEntry"',
-                "1.0.0",
-            )
-        value = cast(
-            RawMetadataValue,
-            canonicalize_backcompat_args(
-                new_val=value,
-                new_arg="value",
-                old_val=entry_data,
-                old_arg="entry_data",
-                breaking_version="1.0.0",
-            ),
-        )
-        value = normalize_metadata_value(value)
-
-        return super(MetadataEntry, cls).__new__(
-            cls,
-            check.str_param(label, "label"),
-            check.opt_str_param(description, "description"),
-            check.inst_param(value, "value", MetadataValue),
-        )
-
-    @property
-    def value(self):
-        """Alias of `entry_data`."""
-        return self.entry_data
