@@ -105,7 +105,7 @@ class BaseAirbyteResource(ConfigurableResource):
                 if data:
                     request_args["json"] = data
 
-                request_args = deep_merge_dicts(  # type: ignore
+                request_args = deep_merge_dicts(
                     request_args,
                     self.all_additional_request_params,
                 )
