@@ -51,6 +51,17 @@ export interface PartitionHealthData {
   ) => Range[];
 }
 
+export interface PartitionHealthDataMerged {
+  dimensions: PartitionHealthDimension[];
+
+  stateForKey: (dimensionKeys: string[]) => AssetPartitionStatus[];
+
+  rangesForSingleDimension: (
+    dimensionIdx: number,
+    otherDimensionSelectedRanges?: PartitionDimensionSelectionRange[] | undefined,
+  ) => Range[];
+}
+
 export interface PartitionHealthDimension {
   name: string;
   type: PartitionDefinitionType;
@@ -79,6 +90,7 @@ export function buildPartitionHealthData(data: PartitionHealthQuery, loadKey: As
     __typename: 'DefaultPartitions',
     unmaterializedPartitions: [],
     materializedPartitions: [],
+    materializingPartitions: [],
     failedPartitions: [],
   };
 
@@ -117,12 +129,12 @@ export function buildPartitionHealthData(data: PartitionHealthQuery, loadKey: As
       return AssetPartitionStatus.MISSING;
     }
     if (!d0Range.subranges || dIndexes.length === 1) {
-      return d0Range.value; // 1D case
+      return d0Range.value[0]; // 1D case
     }
     const d1Range = d0Range.subranges.find(
       (r) => r.start.idx <= dIndexes[1] && r.end.idx >= dIndexes[1],
     );
-    return d1Range ? d1Range.value : AssetPartitionStatus.MISSING;
+    return d1Range ? d1Range.value[0] : AssetPartitionStatus.MISSING;
   };
 
   const rangesForSingleDimension = (
@@ -160,7 +172,7 @@ export function buildPartitionHealthData(data: PartitionHealthQuery, loadKey: As
             subranges,
           };
         })
-        .filter((range) => range.value !== AssetPartitionStatus.MISSING) as Range[];
+        .filter((range) => !isEqual(range.value, AssetPartitionStatus.MISSING)) as Range[];
       return removeSubrangesAndJoin(clipped);
     } else {
       const [d0, d1] = dimensions;
@@ -207,7 +219,7 @@ export function buildPartitionHealthData(data: PartitionHealthQuery, loadKey: As
 export type Range = {
   start: {key: string; idx: number};
   end: {key: string; idx: number};
-  value: AssetPartitionStatus;
+  value: AssetPartitionStatus[];
   subranges?: Range[];
 };
 
@@ -218,19 +230,28 @@ export type Range = {
  */
 export function partitionStatusGivenRanges(ranges: Range[], totalKeyCount: number) {
   const successCount = keyCountInRanges(
-    ranges.filter((r) => r.value === AssetPartitionStatus.MATERIALIZED),
+    ranges.filter((r) => r.value.includes(AssetPartitionStatus.MATERIALIZED)),
+  );
+  const materializingCount = keyCountInRanges(
+    ranges.filter((r) => r.value.includes(AssetPartitionStatus.MATERIALIZING)),
   );
   const failedCount = keyCountInRanges(
-    ranges.filter((r) => r.value === AssetPartitionStatus.FAILED),
+    ranges.filter((r) => r.value.includes(AssetPartitionStatus.FAILED)),
   );
-
-  return successCount === totalKeyCount
-    ? AssetPartitionStatus.MATERIALIZED
-    : failedCount > 0
-    ? AssetPartitionStatus.FAILED
-    : successCount > 0
-    ? AssetPartitionStatus.MATERIALIZED_MISSING
-    : AssetPartitionStatus.MISSING;
+  const statuses: AssetPartitionStatus[] = [];
+  if (successCount > 0) {
+    statuses.push(AssetPartitionStatus.MATERIALIZED);
+  }
+  if (failedCount > 0) {
+    statuses.push(AssetPartitionStatus.FAILED);
+  }
+  if (materializingCount > 0) {
+    statuses.push(AssetPartitionStatus.MATERIALIZING);
+  }
+  if (successCount + failedCount + materializingCount < totalKeyCount) {
+    statuses.push(AssetPartitionStatus.MISSING);
+  }
+  return statuses;
 }
 
 /**
@@ -316,6 +337,7 @@ export function keyCountByStateInSelection(
     return {
       [AssetPartitionStatus.MISSING]: 0,
       [AssetPartitionStatus.MATERIALIZED]: 0,
+      [AssetPartitionStatus.MATERIALIZING]: 0,
       [AssetPartitionStatus.FAILED]: 0,
     };
   }
@@ -343,11 +365,11 @@ export function keyCountByStateInSelection(
         (b.end.idx - b.start.idx + 1) *
           (b.subranges
             ? keyCountInRanges(
-                rangesClippedToSelection(b.subranges, selections[1].selectedRanges).filter(
-                  (b) => b.value === status,
+                rangesClippedToSelection(b.subranges, selections[1].selectedRanges).filter((b) =>
+                  b.value.includes(status),
                 ),
               )
-            : b.value === status
+            : b.value.includes(status)
             ? secondDimensionKeyCount
             : 0),
       0,
@@ -355,39 +377,44 @@ export function keyCountByStateInSelection(
   };
 
   const failed = sumWithStatus(AssetPartitionStatus.FAILED);
+  const materializing = sumWithStatus(AssetPartitionStatus.MATERIALIZING);
   const success = sumWithStatus(AssetPartitionStatus.MATERIALIZED);
 
   return {
-    [AssetPartitionStatus.MISSING]: total - success - failed,
+    [AssetPartitionStatus.MISSING]: total - success - failed - materializing,
     [AssetPartitionStatus.MATERIALIZED]: success,
+    [AssetPartitionStatus.MATERIALIZING]: materializing,
     [AssetPartitionStatus.FAILED]: failed,
   };
 }
 
 // Given a set of ranges representing materialization status across the key space,
-// find the range containing the given key and reutnr it's state, or MISSING.
+// find the range containing the given key and return it's state, or MISSING.
 //
 export function partitionStateAtIndex(ranges: Range[], idx: number) {
   return (
-    ranges.find((r) => r.start.idx <= idx && r.end.idx >= idx)?.value ||
-    AssetPartitionStatus.MISSING
+    ranges.find((r) => r.start.idx <= idx && r.end.idx >= idx)?.value || [
+      AssetPartitionStatus.MISSING,
+    ]
   );
 }
 
 function addKeyIndexesToMaterializedRanges(
   dimensions: {name: string; partitionKeys: string[]}[],
-  materializedPartitions: PartitionHealthMaterializedPartitions,
+  partitions: PartitionHealthMaterializedPartitions,
 ) {
   const result: Range[] = [];
   if (dimensions.length === 0) {
     return result;
   }
-  if (materializedPartitions.__typename === 'DefaultPartitions') {
+  if (partitions.__typename === 'DefaultPartitions') {
     const dim = dimensions[0];
     const spans = assembleIntoSpans(dim.partitionKeys, (key) =>
-      materializedPartitions.materializedPartitions.includes(key)
+      partitions.materializedPartitions.includes(key)
         ? AssetPartitionStatus.MATERIALIZED
-        : materializedPartitions.failedPartitions.includes(key)
+        : partitions.materializingPartitions.includes(key)
+        ? AssetPartitionStatus.MATERIALIZING
+        : partitions.failedPartitions.includes(key)
         ? AssetPartitionStatus.FAILED
         : AssetPartitionStatus.MISSING,
     );
@@ -396,17 +423,17 @@ function addKeyIndexesToMaterializedRanges(
         ({
           start: {key: dim.partitionKeys[s.startIdx], idx: s.startIdx},
           end: {key: dim.partitionKeys[s.endIdx], idx: s.endIdx},
-          value: s.status,
+          value: [s.status as AssetPartitionStatus],
         } as Range),
     );
   }
 
-  for (const range of materializedPartitions.ranges) {
+  for (const range of partitions.ranges) {
     if (range.__typename === 'TimePartitionRange') {
       result.push({
         start: {key: range.startKey, idx: dimensions[0].partitionKeys.indexOf(range.startKey)},
         end: {key: range.endKey, idx: dimensions[0].partitionKeys.indexOf(range.endKey)},
-        value: rangeStatusToState(range.status),
+        value: [rangeStatusToState(range.status)],
       });
     } else if (range.__typename === 'MaterializedPartitionRange2D') {
       if (dimensions.length !== 2) {
@@ -416,7 +443,7 @@ function addKeyIndexesToMaterializedRanges(
       const [dim0, dim1] = dimensions;
       const subranges: Range[] = addKeyIndexesToMaterializedRanges([dim1], range.secondaryDim);
       const value = partitionStatusGivenRanges(subranges, dim1.partitionKeys.length);
-      if (value === AssetPartitionStatus.MISSING) {
+      if (isEqual(value, [AssetPartitionStatus.MISSING])) {
         continue; // should not happen, just for Typescript correctness
       }
       result.push({
@@ -450,7 +477,7 @@ export function rangesForKeys(keys: string[], allKeys: string[]): Range[] {
       {
         start: {key: allKeys[0], idx: 0},
         end: {key: allKeys[allKeys.length - 1], idx: allKeys.length - 1},
-        value: AssetPartitionStatus.MATERIALIZED as const,
+        value: [AssetPartitionStatus.MATERIALIZED],
       },
     ];
   }
@@ -469,7 +496,7 @@ export function rangesForKeys(keys: string[], allKeys: string[]): Range[] {
       ranges.push({
         start: {idx, key: allKeys[idx]},
         end: {idx, key: allKeys[idx]},
-        value: AssetPartitionStatus.MATERIALIZED,
+        value: [AssetPartitionStatus.MATERIALIZED],
       });
     }
   }
@@ -563,6 +590,7 @@ export const PARTITION_HEALTH_QUERY = gql`
           }
           ... on DefaultPartitions {
             materializedPartitions
+            materializingPartitions
             failedPartitions
           }
           ... on MultiPartitions {
@@ -584,6 +612,7 @@ export const PARTITION_HEALTH_QUERY = gql`
                 }
                 ... on DefaultPartitions {
                   materializedPartitions
+                  materializingPartitions
                   failedPartitions
                 }
               }
