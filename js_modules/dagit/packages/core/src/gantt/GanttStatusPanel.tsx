@@ -2,6 +2,7 @@ import {Colors, Spinner, Tooltip} from '@dagster-io/ui';
 import * as React from 'react';
 import styled from 'styled-components/macro';
 
+import {GraphQueryItem} from '../app/GraphQueryImpl';
 import {formatElapsedTime} from '../app/Util';
 import {SidebarSection} from '../pipelines/SidebarComponents';
 import {IRunMetadataDict, IStepState} from '../runs/RunMetadataProvider';
@@ -12,6 +13,7 @@ import {boxStyleFor} from './GanttChartLayout';
 import {RunGroupPanel} from './RunGroupPanel';
 
 interface GanttStatusPanelProps {
+  graph: GraphQueryItem[];
   metadata: IRunMetadataDict;
   selection: StepSelection;
   runId: string;
@@ -25,18 +27,20 @@ interface GanttStatusPanelProps {
 export const GanttStatusPanel: React.FC<GanttStatusPanelProps> = ({
   runId,
   nowMs,
+  graph,
   metadata,
   selection,
   onClickStep,
   onDoubleClickStep,
   onHighlightStep,
 }) => {
-  const {preparing, executing, errored, succeeded} = React.useMemo(() => {
+  const {preparing, executing, errored, succeeded, notExecuted} = React.useMemo(() => {
     const keys = Object.keys(metadata.steps);
     const preparing = [];
     const executing = [];
     const errored = [];
     const succeeded = [];
+    const notExecuted = [];
     for (const key of keys) {
       const state = metadata.steps[key].state;
       switch (state) {
@@ -52,10 +56,18 @@ export const GanttStatusPanel: React.FC<GanttStatusPanelProps> = ({
           break;
         case IStepState.SUCCEEDED:
           succeeded.push(key);
+          break;
       }
     }
-    return {preparing, executing, errored, succeeded};
-  }, [metadata]);
+
+    for (const node of graph) {
+      const name = node.name;
+      if (!(name in metadata.steps) || !metadata.steps[name].state) {
+        notExecuted.push(name);
+      }
+    }
+    return {preparing, executing, errored, succeeded, notExecuted};
+  }, [metadata, graph]);
 
   const renderStepItem = (stepName: string) => (
     <StepItem
@@ -70,8 +82,6 @@ export const GanttStatusPanel: React.FC<GanttStatusPanelProps> = ({
     />
   );
 
-  const isFinished = metadata?.exitedAt && metadata.exitedAt > 0;
-
   return (
     <div style={{overflowY: 'auto'}}>
       <RunGroupPanel
@@ -80,7 +90,7 @@ export const GanttStatusPanel: React.FC<GanttStatusPanelProps> = ({
           metadata.exitedAt || metadata.startedProcessAt || metadata.startedPipelineAt || 0
         }
       />
-      <SidebarSection title={`${isFinished ? 'Not executed' : 'Preparing'} (${preparing.length})`}>
+      <SidebarSection title={`Preparing (${preparing.length})`}>
         <div>
           {preparing.length === 0 ? (
             <EmptyNotice>No steps are waiting to execute</EmptyNotice>
@@ -113,6 +123,15 @@ export const GanttStatusPanel: React.FC<GanttStatusPanelProps> = ({
             <EmptyNotice>No steps have succeeded</EmptyNotice>
           ) : (
             succeeded.map(renderStepItem)
+          )}
+        </div>
+      </SidebarSection>
+      <SidebarSection collapsedByDefault title={`Not executed (${notExecuted.length})`}>
+        <div>
+          {notExecuted.length === 0 ? (
+            <EmptyNotice>No steps have not executed</EmptyNotice>
+          ) : (
+            notExecuted.map(renderStepItem)
           )}
         </div>
       </SidebarSection>
