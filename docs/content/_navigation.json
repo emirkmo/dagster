@@ -200,10 +200,6 @@
           {
             "title": "Run Configuration",
             "path": "/concepts/configuration/config-schema"
-          },
-          {
-            "title": "Configured API",
-            "path": "/concepts/configuration/configured"
           }
         ]
       },
