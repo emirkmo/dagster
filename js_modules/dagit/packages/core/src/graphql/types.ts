@@ -787,6 +787,7 @@ export type DagitQueryScheduleOrErrorArgs = {
 
 export type DagitQuerySchedulesOrErrorArgs = {
   repositorySelector: RepositorySelector;
+  scheduleStatus?: InputMaybe<InstigationStatus>;
 };
 
 export type DagitQuerySensorOrErrorArgs = {
@@ -795,6 +796,7 @@ export type DagitQuerySensorOrErrorArgs = {
 
 export type DagitQuerySensorsOrErrorArgs = {
   repositorySelector: RepositorySelector;
+  sensorStatus?: InputMaybe<InstigationStatus>;
 };
 
 export type DagitQueryTopLevelResourceDetailsOrErrorArgs = {
