@@ -38,9 +38,10 @@ from dagster._core.errors import (
 from dagster._core.instance import DagsterInstance
 from dagster._core.instance.ref import InstanceRef
 from dagster._serdes import whitelist_for_serdes
+from dagster._utils import normalize_to_repository
 
 from ..decorator_utils import (
-    get_function_params,  # pylint: disable=unused-import
+    get_function_params,
 )
 from .asset_selection import AssetSelection
 from .graph_definition import GraphDefinition
@@ -53,6 +54,7 @@ from .utils import check_valid_name
 
 if TYPE_CHECKING:
     from dagster import ResourceDefinition
+    from dagster._core.definitions.definitions_class import Definitions
     from dagster._core.definitions.repository_definition import RepositoryDefinition
 
 
@@ -111,7 +113,7 @@ class SensorEvaluationContext:
         last_run_key: Optional[str],
         cursor: Optional[str],
         repository_name: Optional[str],
-        repository_def: Optional["RepositoryDefinition"] = None,
+        repository_def: Optional[Union["Definitions", "RepositoryDefinition"]] = None,
         instance: Optional[DagsterInstance] = None,
         sensor_name: Optional[str] = None,
         resources: Optional[Mapping[str, "ResourceDefinition"]] = None,
@@ -124,7 +126,7 @@ class SensorEvaluationContext:
         self._last_run_key = check.opt_str_param(last_run_key, "last_run_key")
         self._cursor = check.opt_str_param(cursor, "cursor")
         self._repository_name = check.opt_str_param(repository_name, "repository_name")
-        self._repository_def = repository_def
+        self._repository_def = normalize_to_repository(repository_def, error_on_none=False)
         self._instance = check.opt_inst_param(instance, "instance", DagsterInstance)
         self._sensor_name = sensor_name
 
@@ -753,6 +755,7 @@ def build_sensor_context(
     repository_def: Optional["RepositoryDefinition"] = None,
     sensor_name: Optional[str] = None,
     resources: Optional[Mapping[str, "ResourceDefinition"]] = None,
+    definitions: Optional["Definitions"] = None,
 ) -> SensorEvaluationContext:
     """Builds sensor execution context using the provided parameters.
 
@@ -764,11 +767,15 @@ def build_sensor_context(
         instance (Optional[DagsterInstance]): The dagster instance configured to run the sensor.
         cursor (Optional[str]): A cursor value to provide to the evaluation of the sensor.
         repository_name (Optional[str]): The name of the repository that the sensor belongs to.
-        repository_def (Optional[RepositoryDefinition]): The repository that the sensor belongs to.
-            If needed by the sensor top-level resource definitions will be pulled from this repository.
+        repository_def (Optional[Union[Definitions, RepositoryDefinition]]): The repository or that
+            the sensor belongs to. If needed by the sensor top-level resource definitions will be pulled
+            from this repository. You can provide either this or `definitions`.
         resources (Optional[Mapping[str, ResourceDefinition]]): A set of resource definitions
             to provide to the sensor. If passed, these will override any resource definitions
             provided by the repository.
+        definitions (Optional[Definitions]): `Definitions` object that the sensor is defined in.
+            If needed by the sensor, top-level resource definitions will be pulled from these
+            definitions. You can provide either this or `repository_def`.
 
     Examples:
         .. code-block:: python
@@ -780,6 +787,10 @@ def build_sensor_context(
     check.opt_inst_param(instance, "instance", DagsterInstance)
     check.opt_str_param(cursor, "cursor")
     check.opt_str_param(repository_name, "repository_name")
+    repository_def = normalize_to_repository(
+        check.opt_inst_param(definitions, "definitions", Definitions),
+        check.opt_inst_param(repository_def, "repository_def", RepositoryDefinition),
+    )
 
     return SensorEvaluationContext(
         instance_ref=None,
