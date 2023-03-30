@@ -210,7 +210,7 @@ class FileStoreBucket(ConfigurableResource):
 
 credentials = CredentialsResource(username="my_user", password="my_password")
 defs = Definitions(
-    assets=...,
+    assets=[my_asset],
     resources={
         "bucket": FileStoreBucket(
             credentials=credentials,
@@ -228,7 +228,7 @@ Because `credentials` requires runtime configuration through the launchpad, it m
 credentials = CredentialsResource.configure_at_launch()
 
 defs = Definitions(
-    assets=...,
+    assets=[my_asset],
     resources={
         "credentials": credentials,
         "bucket": FileStoreBucket(
