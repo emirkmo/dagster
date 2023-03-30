@@ -1,6 +1,11 @@
 # isort: skip_file
 # ruff: noqa: T201
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from dagster import Definitions
+
 
 def new_resource_testing() -> None:
     # start_new_resource_testing
@@ -16,6 +21,8 @@ def new_resource_testing() -> None:
         assert MyResource(value="foo").get_value() == "foo"
 
     # end_new_resource_testing
+
+    test_my_resource()
 
 
 def new_resource_testing_with_context() -> None:
@@ -37,11 +44,13 @@ def new_resource_testing_with_context() -> None:
 
     # end_new_resource_testing_with_context
 
+    test_my_resource_with_context()
 
-from typing import Dict, Any
+
+from typing import TYPE_CHECKING, Dict, Any
 
 
-def new_resources_assets_defs() -> None:
+def new_resources_assets_defs() -> "Definitions":
     # start_new_resources_assets_defs
 
     from dagster import asset, Definitions
@@ -61,8 +70,10 @@ def new_resources_assets_defs() -> None:
 
     # end_new_resources_assets_defs
 
+    return defs
 
-def new_resources_ops_defs() -> None:
+
+def new_resources_ops_defs() -> "Definitions":
     # start_new_resources_ops_defs
 
     from dagster import op, Definitions, job, Resource
@@ -83,8 +94,10 @@ def new_resources_ops_defs() -> None:
 
     # end_new_resources_ops_defs
 
+    return defs
 
-def new_resources_configurable_defs() -> None:
+
+def new_resources_configurable_defs() -> "Definitions":
     # start_new_resources_configurable_defs
 
     from dagster import asset, Definitions, ConfigurableResource
@@ -113,8 +126,10 @@ def new_resources_configurable_defs() -> None:
 
     # end_new_resources_configurable_defs
 
+    return defs
 
-def new_resources_configurable_defs_ops() -> None:
+
+def new_resources_configurable_defs_ops() -> "Definitions":
     # start_new_resources_configurable_defs_ops
 
     from dagster import Definitions, job, op, ConfigurableResource
@@ -147,8 +162,10 @@ def new_resources_configurable_defs_ops() -> None:
 
     # end_new_resources_configurable_defs_ops
 
+    return defs
 
-def new_resource_runtime() -> None:
+
+def new_resource_runtime() -> "Definitions":
     # start_new_resource_runtime
     from dagster import ConfigurableResource, Definitions, asset
 
@@ -190,12 +207,26 @@ def new_resource_runtime() -> None:
 
     # end_new_resource_runtime_launch
 
+    defs = Definitions(
+        assets=[data_from_database],
+        jobs=[update_data_job],
+        resources={"db_conn": DatabaseResource.configure_at_launch()},
+        sensors=[table_update_sensor],
+    )
+    return defs
+
 
 def get_filestore_client(*args, **kwargs):
     pass
 
 
-def new_resources_nesting() -> None:
+def new_resources_nesting() -> "Definitions":
+    from dagster import asset
+
+    @asset
+    def my_asset():
+        pass
+
     # start_new_resources_nesting
     from dagster import Definitions, ConfigurableResource
 
@@ -216,7 +247,7 @@ def new_resources_nesting() -> None:
 
     credentials = CredentialsResource(username="my_user", password="my_password")
     defs = Definitions(
-        assets=...,  # type: ignore
+        assets=[my_asset],
         resources={
             "bucket": FileStoreBucket(
                 credentials=credentials,
@@ -230,7 +261,7 @@ def new_resources_nesting() -> None:
     credentials = CredentialsResource.configure_at_launch()
 
     defs = Definitions(
-        assets=...,  # type: ignore
+        assets=[my_asset],
         resources={
             "credentials": credentials,
             "bucket": FileStoreBucket(
@@ -241,6 +272,8 @@ def new_resources_nesting() -> None:
     )
 
     # end_new_resource_dep_job_runtime
+
+    return defs
 
 
 def new_resources_env_vars() -> None:
