@@ -6,6 +6,23 @@ from dagster import Config, RunConfig, config_mapping, job, op
 from dagster._check import CheckError
 
 
+def test_binding_runconfig() -> None:
+    class DoSomethingConfig(Config):
+        config_param: str
+
+    @op
+    def do_something(config: DoSomethingConfig) -> str:
+        return config.config_param
+
+    @job(config=RunConfig(ops={"do_something": DoSomethingConfig(config_param="foo")}))
+    def do_it_all_with_baked_in_config() -> None:
+        do_something()
+
+    result = do_it_all_with_baked_in_config.execute_in_process()
+    assert result.success
+    assert result.output_for_node("do_something") == "foo"
+
+
 def test_config_mapping_return_config_dict() -> None:
     class DoSomethingConfig(Config):
         config_param: str
