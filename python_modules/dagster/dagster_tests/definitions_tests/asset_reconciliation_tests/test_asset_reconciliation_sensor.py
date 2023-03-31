@@ -1,6 +1,7 @@
 import contextlib
 import datetime
 import itertools
+import random
 from typing import Iterable, List, Mapping, NamedTuple, Optional, Sequence, Set, Union
 
 import mock
@@ -36,7 +37,10 @@ from dagster._core.definitions.asset_reconciliation_sensor import (
     AssetReconciliationCursor,
     reconcile,
 )
+from dagster._core.definitions.data_version import DataVersion
+from dagster._core.definitions.decorators.source_asset_decorator import observable_source_asset
 from dagster._core.definitions.freshness_policy import FreshnessPolicy
+from dagster._core.definitions.observe import observe
 from dagster._core.definitions.partition import (
     DefaultPartitionsSubset,
     DynamicPartitionsDefinition,
@@ -56,6 +60,7 @@ class RunSpec(NamedTuple):
     asset_keys: Sequence[AssetKey]
     partition_key: Optional[str] = None
     failed_asset_keys: Optional[Sequence[AssetKey]] = None
+    is_observation: bool = False
 
 
 class AssetReconciliationScenario(NamedTuple):
@@ -132,30 +137,40 @@ class AssetReconciliationScenario(NamedTuple):
                 test_time += self.between_runs_delta
 
             with pendulum.test(test_time), mock.patch("time.time", new=test_time_fn):
-                assets_in_run = []
-                run_keys = set(run.asset_keys)
-                for a in self.assets:
-                    if isinstance(a, SourceAsset):
-                        assets_in_run.append(a)
-                    else:
-                        selected_keys = run_keys.intersection(a.keys)
-                        if selected_keys == a.keys:
+                if run.is_observation:
+                    observe(
+                        instance=instance,
+                        source_assets=[
+                            a
+                            for a in self.assets
+                            if isinstance(a, SourceAsset) and a.key in run.asset_keys
+                        ],
+                    )
+                else:
+                    assets_in_run = []
+                    run_keys = set(run.asset_keys)
+                    for a in self.assets:
+                        if isinstance(a, SourceAsset):
                             assets_in_run.append(a)
-                        elif not selected_keys:
-                            assets_in_run.extend(a.to_source_assets())
                         else:
-                            assets_in_run.append(a.subset_for(run_keys))
-                            assets_in_run.extend(
-                                a.subset_for(a.keys - selected_keys).to_source_assets()
-                            )
+                            selected_keys = run_keys.intersection(a.keys)
+                            if selected_keys == a.keys:
+                                assets_in_run.append(a)
+                            elif not selected_keys:
+                                assets_in_run.extend(a.to_source_assets())
+                            else:
+                                assets_in_run.append(a.subset_for(run_keys))
+                                assets_in_run.extend(
+                                    a.subset_for(a.keys - selected_keys).to_source_assets()
+                                )
 
-                do_run(
-                    asset_keys=run.asset_keys,
-                    partition_key=run.partition_key,
-                    all_assets=self.assets,
-                    instance=instance,
-                    failed_asset_keys=run.failed_asset_keys,
-                )
+                    do_run(
+                        asset_keys=run.asset_keys,
+                        partition_key=run.partition_key,
+                        all_assets=self.assets,
+                        instance=instance,
+                        failed_asset_keys=run.failed_asset_keys,
+                    )
 
         if self.evaluation_delta is not None:
             test_time += self.evaluation_delta
@@ -197,6 +212,7 @@ def do_run(
             else:
                 assets_in_run.append(a.subset_for(asset_keys_set))
                 assets_in_run.extend(a.subset_for(a.keys - selected_keys).to_source_assets())
+
     materialize_to_memory(
         instance=instance,
         partition_key=partition_key,
@@ -220,6 +236,7 @@ def run(
     asset_keys: Iterable[str],
     partition_key: Optional[str] = None,
     failed_asset_keys: Optional[Iterable[str]] = None,
+    is_observation: bool = False,
 ):
     return RunSpec(
         asset_keys=list(
@@ -227,6 +244,7 @@ def run(
         ),
         failed_asset_keys=list(map(AssetKey.from_coerceable, failed_asset_keys or [])),
         partition_key=partition_key,
+        is_observation=is_observation,
     )
 
 
@@ -235,6 +253,14 @@ def run_request(asset_keys: List[str], partition_key: Optional[str] = None) -> R
         asset_selection=[AssetKey(key) for key in asset_keys],
         tags={PARTITION_NAME_TAG: partition_key} if partition_key else None,
     )
+
+
+def observable_source_asset_def(key: str):
+    @observable_source_asset(name=key)
+    def _observable():
+        return DataVersion(str(random.random()))
+
+    return _observable
 
 
 def asset_def(
@@ -596,6 +622,31 @@ two_dynamic_assets = [
     asset_def("asset1", partitions_def=DynamicPartitionsDefinition(name="foo")),
     asset_def("asset2", ["asset1"], partitions_def=DynamicPartitionsDefinition(name="foo")),
 ]
+
+# observable sources
+
+unpartitioned_downstream_of_observable_source = [
+    observable_source_asset_def("source_asset"),
+    asset_def("asset1", ["source_asset"]),
+]
+
+partitioned_downstream_of_observable_source = [
+    observable_source_asset_def("source_asset"),
+    asset_def(
+        "asset1",
+        ["source_asset"],
+        partitions_def=hourly_partitions_def,
+    ),
+]
+
+downstream_of_multiple_observable_source_assets = [
+    observable_source_asset_def("source_asset1"),
+    observable_source_asset_def("source_asset2"),
+    asset_def("asset1", ["source_asset1"]),
+    asset_def("asset2", ["source_asset2"]),
+    asset_def("asset3", ["asset1", "asset2"]),
+]
+
 
 scenarios = {
     ################################################################################################
@@ -1344,6 +1395,73 @@ scenarios = {
             ),
         ],
         expected_run_requests=[],
+    ),
+    ################################################################################################
+    # Observable source assets
+    ################################################################################################
+    "observable_to_unpartitioned1": AssetReconciliationScenario(
+        assets=unpartitioned_downstream_of_observable_source,
+        unevaluated_runs=[
+            run(["source_asset"], is_observation=True),
+            run(["asset1"]),
+        ],
+        expected_run_requests=[],
+    ),
+    "observable_to_unpartitioned2": AssetReconciliationScenario(
+        assets=unpartitioned_downstream_of_observable_source,
+        unevaluated_runs=[
+            run(["source_asset"], is_observation=True),
+            run(["asset1"]),
+            run(["source_asset"], is_observation=True),
+        ],
+        expected_run_requests=[run_request(["asset1"])],
+    ),
+    "observable_to_partitioned": AssetReconciliationScenario(
+        assets=partitioned_downstream_of_observable_source,
+        current_time=create_pendulum_time(year=2013, month=1, day=7, hour=4),
+        unevaluated_runs=[
+            run(["source_asset"], is_observation=True),
+        ]
+        + [
+            run(["asset1"], partition_key=partition_key)
+            for partition_key in hourly_partitions_def.get_partition_keys_in_range(
+                PartitionKeyRange(start="2013-01-06-04:00", end="2013-01-07-03:00")
+            )
+        ],
+        expected_run_requests=[],
+    ),
+    "observable_to_partitioned2": AssetReconciliationScenario(
+        assets=partitioned_downstream_of_observable_source,
+        current_time=create_pendulum_time(year=2013, month=1, day=7, hour=4),
+        unevaluated_runs=[
+            run(["source_asset"], is_observation=True),
+        ]
+        + [
+            run(["asset1"], partition_key=partition_key)
+            for partition_key in hourly_partitions_def.get_partition_keys_in_range(
+                PartitionKeyRange(start="2013-01-06-04:00", end="2013-01-07-03:00")
+            )
+        ]
+        + [
+            run(["source_asset"], is_observation=True),
+        ],
+        expected_run_requests=[
+            run_request(asset_keys=["asset1"], partition_key=partition_key)
+            for partition_key in hourly_partitions_def.get_partition_keys_in_range(
+                PartitionKeyRange(start="2013-01-06-04:00", end="2013-01-07-03:00")
+            )
+        ],
+    ),
+    "multiple_observable": AssetReconciliationScenario(
+        assets=downstream_of_multiple_observable_source_assets,
+        unevaluated_runs=[
+            run(["source_asset1", "source_asset2"], is_observation=True),
+            run(["asset1", "asset2", "asset3"]),
+            run(["source_asset1"], is_observation=True),
+        ],
+        expected_run_requests=[
+            run_request(asset_keys=["asset1", "asset3"]),
+        ],
     ),
 }
 

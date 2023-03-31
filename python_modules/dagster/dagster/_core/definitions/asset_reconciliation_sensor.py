@@ -246,6 +246,7 @@ def find_parent_materialized_asset_partitions(
     target_asset_selection: AssetSelection,
     asset_graph: AssetGraph,
     can_reconcile_fn: Callable[[AssetKeyPartitionKey], bool] = lambda _: True,
+    include_observable_sources: bool = False,
 ) -> Tuple[AbstractSet[AssetKeyPartitionKey], Optional[int]]:
     """Finds asset partitions in the given selection whose parents have been materialized since
     latest_storage_id.
@@ -260,10 +261,26 @@ def find_parent_materialized_asset_partitions(
 
     target_asset_keys = target_asset_selection.resolve(asset_graph)
 
-    target_parent_asset_keys = target_asset_selection.upstream(depth=1).resolve(asset_graph)
+    # do not use AssetSelection machinery here because we want to include source assets
+    target_parent_asset_keys = set().union(
+        *(asset_graph.get_parents(asset_key) for asset_key in target_asset_keys)
+    )
 
     for asset_key in target_parent_asset_keys:
         if asset_graph.is_source(asset_key):
+            # handle observable source asset updates
+            if (
+                asset_graph.is_observable(asset_key)
+                and include_observable_sources
+                and instance_queryer.new_version_exists(
+                    observable_source_asset_key=asset_key, after_cursor=latest_storage_id
+                )
+            ):
+                for child in asset_graph.get_children_partitions(
+                    instance_queryer, asset_key, partition_key=None
+                ):
+                    if child.asset_key in target_asset_keys:
+                        result_asset_partitions.add(child)
             continue
 
         latest_record = instance_queryer.get_latest_materialization_record(
@@ -489,6 +506,7 @@ def determine_asset_partitions_to_reconcile(
         target_asset_selection=target_asset_selection,
         asset_graph=asset_graph,
         can_reconcile_fn=can_reconcile_fn,
+        include_observable_sources=True,
     )
 
     target_asset_keys = target_asset_selection.resolve(asset_graph)
