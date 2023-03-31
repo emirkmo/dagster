@@ -23,7 +23,6 @@ from dagster._core.definitions.asset_reconciliation_sensor import (
     find_parent_materialized_asset_partitions,
 )
 from dagster._core.definitions.asset_selection import AssetSelection
-from dagster._core.definitions.assets_job import is_base_asset_job_name
 from dagster._core.definitions.events import AssetKey, AssetKeyPartitionKey
 from dagster._core.definitions.external_asset_graph import ExternalAssetGraph
 from dagster._core.definitions.mode import DEFAULT_MODE_NAME
@@ -342,8 +341,8 @@ def submit_run_request(
         cast(Sequence[AssetKey], run_request.asset_selection)[0]
     )
     location_name = repo_handle.code_location_origin.location_name
-    job_name = _get_implicit_job_name_for_assets(
-        asset_graph, cast(Sequence[AssetKey], run_request.asset_selection)
+    job_name = asset_graph.get_implicit_job_name_for_assets(
+        cast(Sequence[AssetKey], run_request.asset_selection)
     )
     if job_name is None:
         check.failed(
@@ -405,16 +404,6 @@ def submit_run_request(
     )
 
     instance.submit_run(run.run_id, workspace)
-
-
-def _get_implicit_job_name_for_assets(
-    asset_graph: ExternalAssetGraph, asset_keys: Sequence[AssetKey]
-) -> Optional[str]:
-    job_names = set(asset_graph.get_job_names(asset_keys[0]))
-    for asset_key in asset_keys[1:]:
-        job_names &= set(asset_graph.get_job_names(asset_key))
-
-    return next(job_name for job_name in job_names if is_base_asset_job_name(job_name))
 
 
 class AssetBackfillIterationResult(NamedTuple):
